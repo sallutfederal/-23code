@@ -3,12 +3,14 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs').promises;
+const http = require('http');
 const { exec } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
 
 let mainWindow;
 let server;
+let httpServer;
 
 // --- Logging ---
 const LOG_PATH = path.join(app.getPath('userData'), 'operations.log');
@@ -150,17 +152,18 @@ function startServer() {
     });
 
     const PORT = 3001;
-    server.on('error', (err) => {
+    httpServer = http.createServer(server);
+    httpServer.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         console.log(`Porta ${PORT} em uso, tentando ${PORT + 1}...`);
-        server.listen(PORT + 1, () => {
+        httpServer.listen(PORT + 1, () => {
           console.log(`API server: http://localhost:${PORT + 1}`);
           resolve();
         });
       }
     });
     
-    server.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log(`API server: http://localhost:${PORT}`);
       resolve();
     });
@@ -725,7 +728,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (server) server.close();
+  if (httpServer) httpServer.close();
   if (process.platform !== 'darwin') app.quit();
 });
 
