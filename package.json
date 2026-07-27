@@ -1,0 +1,54 @@
+{
+  "name": "ai-assistant",
+  "version": "1.0.0",
+  "description": "AI Chat Desktop App",
+  "main": "backend/main.js",
+  "scripts": {
+    "start": "npm run build:frontend && electron .",
+    "dev": "concurrently \"cd frontend && npm run dev\" \"node backend/dev-server.js\" \"sleep 2 && electron . --dev\"",
+    "build:frontend": "cd frontend && npm run build",
+    "build:win": "npm run build:frontend && electron-builder --win",
+    "build:mac": "npm run build:frontend && electron-builder --mac",
+    "build:linux": "npm run build:frontend && electron-builder --linux"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.9.1",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.3"
+  },
+  "build": {
+    "appId": "com.ai-assistant.app",
+    "productName": "AI Assistant",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "backend/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "backend/icon.ico"
+    },
+    "linux": {
+      "icon": "backend/icon.ico"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "backend/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "allowScripts": {
+    "electron@28.3.3": true
+  }
+}

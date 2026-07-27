@@ -1,0 +1,227 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { UserProvider, useUser } from './context/UserContext'
+import { ChatProvider, useChat } from './context/ChatContext'
+import TitleBar from './components/TitleBar'
+import Sidebar from './components/Sidebar'
+import WelcomeScreen from './components/WelcomeScreen'
+import ChatView from './components/ChatView'
+import Settings from './components/Settings'
+import { parseCommand, executeCommand } from './utils/commandParser'
+import { DEFAULT_MODEL } from './config/model'
+
+function AppContent() {
+  const { user, showSettings, theme } = useUser()
+  const { activeChat, activeChatId, createChat, sendMessage, selectChat, newChat } = useChat()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL)
+  const [loadingStatus, setLoadingStatus] = useState('idle')
+  const [displayedText, setDisplayedText] = useState('')
+  const typewriterRef = useRef(null)
+
+  useEffect(() => {
+    const root = document.documentElement
+    
+    const applyTheme = (isDark) => {
+      if (isDark) {
+        root.classList.add('dark')
+      } else {
+        root.classList.remove('dark')
+      }
+    }
+
+    if (theme === 'dark') {
+      applyTheme(true)
+    } else if (theme === 'light') {
+      applyTheme(false)
+    } else {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      applyTheme(prefersDark)
+      
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+      const handleChange = (e) => applyTheme(e.matches)
+      mediaQuery.addEventListener('change', handleChange)
+      return () => mediaQuery.removeEventListener('change', handleChange)
+    }
+  }, [theme])
+
+  // Typewriter effect com variação natural
+  const startTypewriter = useCallback((text, chatId) => {
+    let index = 0
+    setDisplayedText('')
+    setLoadingStatus('typing')
+
+    const typeNext = () => {
+      if (index < text.length) {
+        setDisplayedText(text.slice(0, index + 1))
+        index++
+        // Variação natural: 2-6ms por caractere
+        const char = text[index - 1]
+        let delay = 2 + Math.random() * 4
+        if (char === ' ') delay = 1 + Math.random() * 2
+        else if ('.!?:'.includes(char)) delay = 5 + Math.random() * 8
+        else if (',;'.includes(char)) delay = 3 + Math.random() * 5
+
+        typewriterRef.current = setTimeout(typeNext, delay)
+      } else {
+        // Terminou de digitar
+        sendMessage(chatId, 'assistant', text)
+        setDisplayedText('')
+        setLoadingStatus('idle')
+      }
+    }
+
+    typeNext()
+  }, [sendMessage])
+
+  // Cleanup typewriter no unmount
+  useEffect(() => {
+    return () => {
+      if (typewriterRef.current) clearTimeout(typewriterRef.current)
+    }
+  }, [])
+
+  const handleSendMessage = async (text, attachments = []) => {
+    let chatId = activeChatId
+
+    // Build message with attachments
+    let fullMessage = text
+    if (attachments.length > 0) {
+      const fileParts = attachments.map(att => {
+        if (att.isImage) {
+          return `[Imagem anexada: ${att.name}]\n${att.content}`
+        }
+        return `[Arquivo: ${att.name}]\n\`\`\`\n${att.content}\n\`\`\``
+      })
+      fullMessage = text ? `${text}\n\n${fileParts.join('\n\n')}` : fileParts.join('\n\n')
+    }
+
+    if (!chatId) {
+      chatId = createChat(fullMessage)
+    } else {
+      sendMessage(chatId, 'user', fullMessage)
+    }
+
+    // Inicia estado "thinking"
+    setLoadingStatus('thinking')
+
+    try {
+      const commands = await parseCommand(text)
+      
+      if (commands && commands.length > 0) {
+        setLoadingStatus('idle')
+        for (const command of commands) {
+          const result = await executeCommand(command)
+          sendMessage(chatId, 'assistant', result.message || result.error)
+        }
+      } else {
+        const currentMessages = activeChat?.messages || []
+        const history = currentMessages.slice(-10)
+        
+        let data
+        const userContext = {
+          name: user.name,
+          instructions: user.instructions
+        }
+        const modelId = selectedModel.id
+
+        const skillMatch = text.match(/@(\S+)/)
+        if (skillMatch && window.electronAPI?.readSkill) {
+          const skillName = skillMatch[1]
+          const result = await window.electronAPI.readSkill(`${skillName}.md`)
+          if (result.success) {
+            userContext.skillContent = result.data
+          }
+        }
+
+        // Knowledge Graph: busca contexto antes de responder
+        if (window.electronAPI?.knowledgePipeline) {
+          try {
+            const kgResult = await window.electronAPI.knowledgePipeline({
+              text: fullMessage,
+              projectId: 'default',
+              nodeType: 'contexto_projeto',
+            })
+            if (kgResult.success && kgResult.data?.retrieved_context) {
+              userContext.knowledgeContext = kgResult.data.retrieved_context
+            }
+          } catch (kgError) {
+            console.log('Knowledge graph indisponível:', kgError.message)
+          }
+        }
+
+        if (window.electronAPI) {
+          const result = await window.electronAPI.sendMessage(fullMessage, history, userContext, modelId)
+          data = result.data
+        } else {
+          const response = await fetch('http://localhost:3001/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: fullMessage, history, userContext, model: modelId })
+          })
+          data = await response.json()
+        }
+
+        // Resposta recebida — inicia efeito de digitação
+        startTypewriter(data.response, chatId)
+      }
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error)
+      setLoadingStatus('idle')
+      sendMessage(chatId, 'assistant', 'Erro ao processar comando.')
+    }
+  }
+
+  const handleNewChat = () => {
+    newChat()
+    setSidebarOpen(false)
+  }
+
+  const handleSelectChat = (chatId) => {
+    selectChat(chatId)
+    setSidebarOpen(false)
+  }
+
+  const messages = activeChat?.messages || []
+
+  return (
+    <div className="h-screen flex flex-col bg-white dark:bg-[#0a0a14]">
+      <TitleBar onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          onNewChat={handleNewChat}
+          onSelectChat={handleSelectChat}
+        />
+        <main className="flex-1 overflow-hidden">
+          {!activeChat ? (
+            <WelcomeScreen onSendMessage={handleSendMessage} selectedModel={selectedModel} onModelChange={setSelectedModel} />
+          ) : (
+            <ChatView
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              selectedModel={selectedModel}
+              onModelChange={setSelectedModel}
+              loadingStatus={loadingStatus}
+              displayedText={displayedText}
+            />
+          )}
+        </main>
+      </div>
+
+      {showSettings && <Settings />}
+    </div>
+  )
+}
+
+function App() {
+  return (
+    <UserProvider>
+      <ChatProvider>
+        <AppContent />
+      </ChatProvider>
+    </UserProvider>
+  )
+}
+
+export default App
