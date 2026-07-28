@@ -19,16 +19,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // System Control API
   execute: (command, cwd) => ipcRenderer.invoke('system:execute', command, cwd),
 
-  // 1. Localizar pasta - resolve nome/caminho para path real do SO
+  // 1. Localizar pasta
   locateFolder: (folderName) => ipcRenderer.invoke('system:locateFolder', folderName),
 
-  // 2. Criar pasta - cria diretório recursivamente
+  // 2. Criar pasta
   createDir: (dirPath) => ipcRenderer.invoke('system:createDir', dirPath),
 
-  // 3. Criar arquivo - cria arquivo, retorna {exists:true} se já existir sem overwrite
+  // 3. Criar arquivo
   createFile: (filePath, content, overwrite) => ipcRenderer.invoke('system:createFile', filePath, content, overwrite),
 
-  // 4. Editar arquivo - find-and-replace de oldStr por newStr (não sobrescreve inteiro)
+  // 4. Editar arquivo
   editFile: (filePath, oldStr, newStr) => ipcRenderer.invoke('system:editFile', filePath, oldStr, newStr),
 
   readFile: (filePath) => ipcRenderer.invoke('system:readFile', filePath),
@@ -51,4 +51,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   knowledgeSearch: (data) => ipcRenderer.invoke('knowledge:search', data),
   knowledgeCreateNode: (data) => ipcRenderer.invoke('knowledge:createNode', data),
   knowledgeStats: () => ipcRenderer.invoke('knowledge:stats'),
+
+  // Gate de Confirmação
+  confirmResponse: (requestId, approved) => ipcRenderer.invoke('confirm:response', { requestId, approved }),
+  getOperationsLog: (opts) => ipcRenderer.invoke('system:getOperationsLog', opts),
+
+  // Eventos de confirmação (main → frontend)
+  onConfirmRequest: (callback) => ipcRenderer.on('confirm:request', (_, data) => callback(data)),
+  removeConfirmListener: () => ipcRenderer.removeAllListeners('confirm:request'),
 });

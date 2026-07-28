@@ -52,14 +52,23 @@ const COMMAND_PATTERNS = {
     /ler\s+arquivo\s+["']?([^"']+)["']?/i,
   ],
   editFile: [
+    // Substituir X por Y
     /edite?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+substitu(?:indo|ir)\s+["']([^"']+)["']\s+por\s+["']([^"']+)["']/i,
     /altere?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+substitu(?:indo|ir)\s+["']([^"']+)["']\s+por\s+["']([^"']+)["']/i,
     /edite?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+de\s+["']([^"']+)["']\s+para\s+["']([^"']+)["']/i,
     /mude\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+de\s+["']([^"']+)["']\s+para\s+["']([^"']+)["']/i,
+    // Editar com conteúdo (find-replace: conteúdo inteiro → novo conteúdo)
     /edite?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+com\s+["']([^"']+)["']/i,
     /altere?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+para\s+["']([^"']+)["']/i,
     /mude\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+para\s+["']([^"']+)["']/i,
     /editar\s+arquivo\s+["']?([^"']+)["']?/i,
+    // Coloque/adicione/escreva conteúdo dentro/no arquivo
+    /(?:coloque|adicione|escreva|insira|jogue)\s+(.+?)\s+(?:dentro\s+de|em|no)\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?/i,
+    /edite?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?\s+(?:coloque|adicione|escreva|insira|jogue)\s+(.+)$/i,
+    // Linguagem natural: "edite arquivo X coloque Y dentro"
+    /edite?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"'\s]+\.[a-z0-9]+)["']?\s+(?:coloque|adicione|escreva|insira|jogue)\s+(.+)$/i,
+    // Linguagem natural: "edite X" (só o arquivo)
+    /edite?\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"'\s]+\.[a-z0-9]+)["']?/i,
   ],
   deleteFile: [
     /exclu(?:a|ir)\s+(?:o\s+)?(?:arquivo|file)\s+["']?([^"']+)["']?/i,
@@ -260,6 +269,7 @@ export async function executeCommand(command) {
       }
 
       case 'editFile': {
+        // 3 args: find-replace (oldStr, newStr)
         if (args.length >= 3) {
           const result = await window.electronAPI.editFile(args[0], args[1], args[2]);
           if (result.success) {
@@ -267,11 +277,20 @@ export async function executeCommand(command) {
           }
           return { success: false, error: result.error };
         }
-        const result = await window.electronAPI.createFile(args[0], args[1] || '', true);
-        if (result.success) {
-          return { success: true, message: `Arquivo "${args[0]}" reescrito com sucesso!` };
+        // 2 args: arquivo + conteúdo (reescrever)
+        if (args.length === 2) {
+          const result = await window.electronAPI.createFile(args[0], args[1] || '', true);
+          if (result.success) {
+            return { success: true, message: `Arquivo "${args[0]}" editado com sucesso!` };
+          }
+          return { success: false, error: result.error };
         }
-        return { success: false, error: result.error };
+        // 1 arg: só o arquivo (ler conteúdo)
+        const readResult = await window.electronAPI.readFile(args[0]);
+        if (readResult.success) {
+          return { success: true, message: `Conteúdo de "${args[0]}":\n\n${readResult.data}` };
+        }
+        return { success: false, error: readResult.error };
       }
 
       case 'deleteFile':

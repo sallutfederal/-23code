@@ -1,9 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs').promises;
 const http = require('http');
+const crypto = require('crypto');
 const { exec } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
@@ -12,12 +14,23 @@ let mainWindow;
 let server;
 let httpServer;
 
+// --- Configurações do Gate de Confirmação ---
+const MAX_DIFF_LINES = 2000;
+const MAX_DIFF_SIZE_BYTES = 200 * 1024; // 200KB
+const DEFAULT_CONFIRM_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
+
+// --- Fila de confirmações pendentes ---
+// Map<requestId, { resolve, reject, timeout, action, filePath }>
+const pendingConfirmations = new Map();
+
 // --- Logging ---
 const LOG_PATH = path.join(app.getPath('userData'), 'operations.log');
 
-async function logOperation(action, filePath, extra = '') {
+async function logOperation(action, filePath, result = '', extra = '') {
   const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] ${action} | ${filePath}${extra ? ' | ' + extra : ''}\n`;
+  const parts = [timestamp, action, result || 'AUTO', filePath];
+  if (extra) parts.push(extra);
+  const line = `[${parts.join(' | ')}]\n`;
   try {
     await fs.appendFile(LOG_PATH, line, 'utf-8');
   } catch {
@@ -25,8 +38,113 @@ async function logOperation(action, filePath, extra = '') {
   }
 }
 
+// --- Diff simples linha a linha (sem dependência externa) ---
+function computeDiff(oldContent, newContent) {
+  const oldLines = (oldContent || '').split('\n');
+  const newLines = (newContent || '').split('\n');
+
+  // Verifica limites para não travar o main process
+  if (
+    oldLines.length > MAX_DIFF_LINES ||
+    newLines.length > MAX_DIFF_LINES ||
+    Buffer.byteLength(oldContent || '', 'utf-8') > MAX_DIFF_SIZE_BYTES ||
+    Buffer.byteLength(newContent || '', 'utf-8') > MAX_DIFF_SIZE_BYTES
+  ) {
+    return {
+      truncated: true,
+      oldLines: oldLines.length,
+      newLines: newLines.length,
+      message: `Arquivo grande (${oldLines.length} → ${newLines.length} linhas) — alteração não pode ser pré-visualizada em detalhe, revise o arquivo após aprovar.`
+    };
+  }
+
+  // Algoritmo LCS simples para diff mínimo
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  // Matriz LCS
+  const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Reconstrói o diff
+  const diff = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      diff.unshift({ type: 'context', content: oldLines[i - 1], lineOld: i, lineNew: j });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      diff.unshift({ type: 'added', content: newLines[j - 1], lineNew: j });
+      j--;
+    } else {
+      diff.unshift({ type: 'removed', content: oldLines[i - 1], lineOld: i });
+      i--;
+    }
+  }
+
+  // Limita o contexto: mostra no máximo 3 linhas antes/depois de cada mudança
+  const changes = diff.map((d, idx) => ({ ...d, idx })).filter(d => d.type !== 'context');
+  const showIndices = new Set();
+
+  for (const change of changes) {
+    for (let k = Math.max(0, change.idx - 3); k <= Math.min(diff.length - 1, change.idx + 3); k++) {
+      showIndices.add(k);
+    }
+  }
+
+  const filtered = [];
+  let lastIdx = -1;
+  for (const idx of showIndices) {
+    if (lastIdx >= 0 && idx - lastIdx > 1) {
+      filtered.push({ type: 'separator', content: '...' });
+    }
+    filtered.push(diff[idx]);
+    lastIdx = idx;
+  }
+
+  return { truncated: false, lines: filtered };
+}
+
+// --- Solicita confirmação do usuário (gate de confirmação) ---
+function requestConfirmation({ action, filePath, content, oldContent, timeout = DEFAULT_CONFIRM_TIMEOUT_MS }) {
+  return new Promise((resolve, reject) => {
+    const requestId = crypto.randomUUID();
+
+    const timer = setTimeout(() => {
+      pendingConfirmations.delete(requestId);
+      logOperation(action, filePath, 'TIMEOUT');
+      reject(new Error('Confirmação expirada (timeout)'));
+    }, timeout);
+
+    pendingConfirmations.set(requestId, { resolve, reject, timeout: timer, action, filePath });
+
+    let preview;
+    if (action === 'EDIT_FILE') {
+      preview = { type: 'diff', diff: computeDiff(oldContent, content) };
+    } else {
+      preview = { type: 'content', content: (content || '').slice(0, 500) };
+    }
+
+    mainWindow?.webContents.send('confirm:request', {
+      requestId,
+      action,
+      filePath,
+      preview,
+      timeout
+    });
+  });
+}
+
 // --- Resolução de caminhos ---
-// Mapeia nomes conhecidos do SO para os paths reais
 const KNOWN_FOLDERS = {
   downloads: () => app.getPath('downloads'),
   download: () => app.getPath('downloads'),
@@ -46,17 +164,14 @@ function resolveFolderPath(input) {
   const trimmed = input.trim();
   const lower = trimmed.toLowerCase();
 
-  // Se é um nome conhecido do SO, usa app.getPath
   if (KNOWN_FOLDERS[lower]) {
     return KNOWN_FOLDERS[lower]();
   }
 
-  // Se é caminho absoluto, usa direto
   if (path.isAbsolute(trimmed)) {
     return path.normalize(trimmed);
   }
 
-  // Se é relativo, resolve a partir da home do usuário
   const home = app.getPath('home');
   return path.join(home, trimmed);
 }
@@ -388,87 +503,169 @@ ipcMain.handle('system:execute', async (event, command, cwd) => {
   }
 });
 
-// --- 1. LOCALIZAR PASTA ---
+// --- 1. LOCALIZAR PASTA (sem gate — só leitura) ---
 ipcMain.handle('system:locateFolder', async (event, folderName) => {
   try {
     const resolved = resolveFolderPath(folderName);
-    await logOperation('LOCATE_FOLDER', folderName, `→ ${resolved}`);
+    await logOperation('LOCATE_FOLDER', folderName, 'AUTO', `→ ${resolved}`);
     return { success: true, data: resolved };
   } catch (error) {
-    await logOperation('LOCATE_FOLDER_FAIL', folderName, error.message);
+    await logOperation('LOCATE_FOLDER', folderName, 'FAILED', error.message);
     return { success: false, error: error.message };
   }
 });
 
-// --- 2. CRIAR PASTA ---
+// --- 2. CRIAR PASTA (com gate de confirmação) ---
 ipcMain.handle('system:createDir', async (event, dirPath) => {
   try {
-    await fs.mkdir(dirPath, { recursive: true });
-    await logOperation('CREATE_DIR', dirPath);
-    return { success: true, data: dirPath };
+    const resolved = path.resolve(dirPath);
+
+    // GATE DE CONFIRMAÇÃO — pausa até usuário aprovar
+    await requestConfirmation({
+      action: 'CREATE_DIR',
+      filePath: resolved,
+    });
+
+    // Só executa SE a confirmação foi aprovada
+    await fs.mkdir(resolved, { recursive: true });
+    await logOperation('CREATE_DIR', resolved, 'APPROVED');
+    return { success: true, data: resolved };
   } catch (error) {
-    await logOperation('CREATE_DIR_FAIL', dirPath, error.message);
-    return { success: false, error: error.message };
+    const errorMsg = error.message || String(error);
+    // Se não é timeout nem negação, loga como falha
+    if (!errorMsg.includes('expirada') && !errorMsg.includes('cancelada')) {
+      await logOperation('CREATE_DIR', dirPath, 'FAILED', errorMsg);
+    }
+    return { success: false, error: errorMsg };
   }
 });
 
-// --- 3. CRIAR ARQUIVO ---
-// Se o arquivo já existe, retorna { exists: true } para o frontend decidir
+// --- 3. CRIAR ARQUIVO (com gate de confirmação) ---
 ipcMain.handle('system:createFile', async (event, filePath, content, overwrite = false) => {
   try {
-    // Verifica se arquivo já existe
+    // Verifica se arquivo já existe (leitura — sem gate)
+    let fileExists = false;
     try {
       await fs.access(filePath);
-      // Arquivo existe
-      if (!overwrite) {
-        await logOperation('CREATE_FILE_EXISTS', filePath);
-        return { success: false, exists: true, error: 'Arquivo já existe. Envie overwrite=true para sobrescrever.' };
-      }
-    } catch {
-      // fs.access lança erro se não existe — OK, vamos criar
+      fileExists = true;
+    } catch {}
+
+    if (fileExists && !overwrite) {
+      await logOperation('CREATE_FILE', filePath, 'EXISTS');
+      return { success: false, exists: true, error: 'Arquivo já existe. Envie overwrite=true para sobrescrever.' };
     }
 
-    const dir = path.dirname(filePath);
+    const resolved = path.resolve(filePath);
+
+    // GATE DE CONFIRMAÇÃO — pausa até usuário aprovar
+    await requestConfirmation({
+      action: 'CREATE_FILE',
+      filePath: resolved,
+      content: content || '',
+    });
+
+    // Cria diretório pai se necessário
+    const dir = path.dirname(resolved);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(filePath, content || '', 'utf-8');
-    await logOperation('CREATE_FILE', filePath, overwrite ? '(sobrescrito)' : '(novo)');
-    return { success: true, data: filePath };
+    await fs.writeFile(resolved, content || '', 'utf-8');
+    await logOperation('CREATE_FILE', resolved, 'APPROVED', overwrite ? '(sobrescrito)' : '(novo)');
+    return { success: true, data: resolved };
   } catch (error) {
-    await logOperation('CREATE_FILE_FAIL', filePath, error.message);
-    return { success: false, error: error.message };
+    const errorMsg = error.message || String(error);
+    if (!errorMsg.includes('expirada') && !errorMsg.includes('cancelada')) {
+      await logOperation('CREATE_FILE', filePath, 'FAILED', errorMsg);
+    }
+    return { success: false, error: errorMsg };
   }
 });
 
-// --- 4. EDITAR ARQUIVO (find-and-replace) ---
+// --- 4. EDITAR ARQUIVO (com gate de confirmação + diff) ---
 ipcMain.handle('system:editFile', async (event, filePath, oldStr, newStr) => {
   try {
-    // Lê conteúdo atual
-    const content = await fs.readFile(filePath, 'utf-8');
+    const resolved = path.resolve(filePath);
 
-    // Verifica se o trecho antigo existe no arquivo
-    if (!content.includes(oldStr)) {
-      await logOperation('EDIT_FILE_NOT_FOUND', filePath, `oldStr não encontrado`);
+    // Lê conteúdo atual (leitura — sem gate)
+    const currentContent = await fs.readFile(resolved, 'utf-8');
+
+    if (!currentContent.includes(oldStr)) {
+      await logOperation('EDIT_FILE', resolved, 'NOT_FOUND');
       return { success: false, error: 'Trecho antigo não encontrado no arquivo.' };
     }
 
-    // Faz a troca (todas as ocorrências)
-    const updated = content.split(oldStr).join(newStr);
-    await fs.writeFile(filePath, updated, 'utf-8');
+    // Calcula conteúdo resultante (para o diff)
+    const newContent = currentContent.split(oldStr).join(newStr);
 
-    const occurrences = content.split(oldStr).length - 1;
-    await logOperation('EDIT_FILE', filePath, `${occurrences} ocorrência(s) trocada(s)`);
+    // GATE DE CONFIRMAÇÃO — pausa até usuário aprovar
+    // O preview inclui diff real (oldContent → newContent)
+    await requestConfirmation({
+      action: 'EDIT_FILE',
+      filePath: resolved,
+      content: newContent,
+      oldContent: currentContent,
+    });
+
+    // Só escreve SE aprovado
+    await fs.writeFile(resolved, newContent, 'utf-8');
+    const occurrences = currentContent.split(oldStr).length - 1;
+    await logOperation('EDIT_FILE', resolved, 'APPROVED', `${occurrences} ocorrência(s) trocada(s)`);
     return { success: true, data: { occurrences } };
   } catch (error) {
-    await logOperation('EDIT_FILE_FAIL', filePath, error.message);
+    const errorMsg = error.message || String(error);
+    if (!errorMsg.includes('expirada') && !errorMsg.includes('cancelada')) {
+      await logOperation('EDIT_FILE', filePath, 'FAILED', errorMsg);
+    }
+    return { success: false, error: errorMsg };
+  }
+});
+
+// --- Resposta de confirmação do frontend ---
+ipcMain.handle('confirm:response', async (event, { requestId, approved }) => {
+  const pending = pendingConfirmations.get(requestId);
+  if (!pending) {
+    return { success: false, error: 'Confirmação não encontrada ou expirada' };
+  }
+
+  clearTimeout(pending.timeout);
+  pendingConfirmations.delete(requestId);
+
+  if (approved) {
+    pending.resolve();
+  } else {
+    await logOperation(pending.action, pending.filePath, 'DENIED');
+    pending.reject(new Error('Operação cancelada pelo usuário'));
+  }
+
+  return { success: true };
+});
+
+// --- Log de operações ---
+ipcMain.handle('system:getOperationsLog', async (event, { limit = 50 } = {}) => {
+  try {
+    const content = await fs.readFile(LOG_PATH, 'utf-8').catch(() => '');
+    const lines = content.trim().split('\n').filter(Boolean);
+    const entries = lines.slice(-limit).reverse().map(line => {
+      // Formato: [timestamp | action | result | path | extra]
+      const match = line.match(/^\[(.+?)\] (.+?) \| (.+?) \| (.+?)(?:\| (.+))?$/);
+      if (!match) return null;
+      return {
+        timestamp: match[1],
+        action: match[2],
+        result: match[3],
+        path: match[4].trim(),
+        extra: match[5] ? match[5].trim() : ''
+      };
+    }).filter(Boolean);
+    return { success: true, data: entries };
+  } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-// --- Operações auxiliares (manter as existentes) ---
+// --- Operações auxiliares ---
 ipcMain.handle('system:readFile', async (event, filePath) => {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
-    await logOperation('READ_FILE', filePath);
+    await logOperation('READ_FILE', filePath, 'OK');
     return { success: true, data: content };
   } catch (error) {
     return { success: false, error: error.message };
@@ -478,7 +675,7 @@ ipcMain.handle('system:readFile', async (event, filePath) => {
 ipcMain.handle('system:deleteFile', async (event, filePath) => {
   try {
     await fs.unlink(filePath);
-    await logOperation('DELETE_FILE', filePath);
+    await logOperation('DELETE_FILE', filePath, 'OK');
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -488,7 +685,7 @@ ipcMain.handle('system:deleteFile', async (event, filePath) => {
 ipcMain.handle('system:deleteDir', async (event, dirPath) => {
   try {
     await fs.rm(dirPath, { recursive: true, force: true });
-    await logOperation('DELETE_DIR', dirPath);
+    await logOperation('DELETE_DIR', dirPath, 'OK');
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -722,9 +919,37 @@ ipcMain.handle('memory:saveSettings', async (event, settings) => {
   }
 });
 
+// --- Lifecycle do app ---
 app.whenReady().then(async () => {
   await startServer();
   createWindow();
+});
+
+// Fecha confirmações pendentes antes de encerrar
+app.on('before-quit', async (event) => {
+  if (pendingConfirmations.size > 0) {
+    event.preventDefault();
+
+    const rejections = [];
+    for (const [requestId, { reject, timeout }] of pendingConfirmations) {
+      clearTimeout(timeout);
+      rejections.push(
+        (async () => {
+          try {
+            await Promise.reject(new Error('App fechado — operação cancelada'));
+          } catch (e) {
+            await logOperation('CONFIRM_CANCELLED', requestId, 'CLOSED', e.message);
+          }
+        })()
+      );
+    }
+    pendingConfirmations.clear();
+
+    // Aguarda todas as rejeições + logs resolverem antes de quit
+    await Promise.allSettled(rejections);
+
+    app.quit();
+  }
 });
 
 app.on('window-all-closed', () => {

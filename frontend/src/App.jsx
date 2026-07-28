@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import ChatView from './components/ChatView'
 import Settings from './components/Settings'
+import ConfirmDialog from './components/ConfirmDialog'
 import { parseCommand, executeCommand } from './utils/commandParser'
 import { DEFAULT_MODEL } from './config/model'
 
@@ -18,6 +19,44 @@ function AppContent() {
   const [displayedText, setDisplayedText] = useState('')
   const typewriterRef = useRef(null)
 
+  // --- Fila de confirmações ---
+  const [confirmQueue, setConfirmQueue] = useState([])
+  const [currentConfirm, setCurrentConfirm] = useState(null)
+
+  // Escuta pedidos de confirmação do main process
+  useEffect(() => {
+    if (!window.electronAPI?.onConfirmRequest) return
+
+    const handler = (data) => {
+      setConfirmQueue(prev => [...prev, data])
+    }
+
+    window.electronAPI.onConfirmRequest(handler)
+
+    return () => {
+      window.electronAPI.removeConfirmListener()
+    }
+  }, [])
+
+  // Mostra próximo da fila quando o atual é resolvido
+  useEffect(() => {
+    if (!currentConfirm && confirmQueue.length > 0) {
+      setCurrentConfirm(confirmQueue[0])
+      setConfirmQueue(prev => prev.slice(1))
+    }
+  }, [currentConfirm, confirmQueue])
+
+  const handleConfirm = useCallback(async (requestId) => {
+    setCurrentConfirm(null)
+    await window.electronAPI.confirmResponse(requestId, true)
+  }, [])
+
+  const handleDeny = useCallback(async (requestId) => {
+    setCurrentConfirm(null)
+    await window.electronAPI.confirmResponse(requestId, false)
+  }, [])
+
+  // --- Tema ---
   useEffect(() => {
     const root = document.documentElement
     
@@ -54,7 +93,6 @@ function AppContent() {
       if (index < text.length) {
         setDisplayedText(text.slice(0, index + 1))
         index++
-        // Variação natural: 2-6ms por caractere
         const char = text[index - 1]
         let delay = 2 + Math.random() * 4
         if (char === ' ') delay = 1 + Math.random() * 2
@@ -63,7 +101,6 @@ function AppContent() {
 
         typewriterRef.current = setTimeout(typeNext, delay)
       } else {
-        // Terminou de digitar
         sendMessage(chatId, 'assistant', text)
         setDisplayedText('')
         setLoadingStatus('idle')
@@ -73,7 +110,6 @@ function AppContent() {
     typeNext()
   }, [sendMessage])
 
-  // Cleanup typewriter no unmount
   useEffect(() => {
     return () => {
       if (typewriterRef.current) clearTimeout(typewriterRef.current)
@@ -83,7 +119,6 @@ function AppContent() {
   const handleSendMessage = async (text, attachments = []) => {
     let chatId = activeChatId
 
-    // Build message with attachments
     let fullMessage = text
     if (attachments.length > 0) {
       const fileParts = attachments.map(att => {
@@ -101,7 +136,6 @@ function AppContent() {
       sendMessage(chatId, 'user', fullMessage)
     }
 
-    // Inicia estado "thinking"
     setLoadingStatus('thinking')
 
     try {
@@ -133,7 +167,6 @@ function AppContent() {
           }
         }
 
-        // Knowledge Graph: busca contexto antes de responder
         if (window.electronAPI?.knowledgePipeline) {
           try {
             const kgResult = await window.electronAPI.knowledgePipeline({
@@ -161,7 +194,6 @@ function AppContent() {
           data = await response.json()
         }
 
-        // Resposta recebida — inicia efeito de digitação
         startTypewriter(data.response, chatId)
       }
     } catch (error) {
@@ -210,6 +242,19 @@ function AppContent() {
       </div>
 
       {showSettings && <Settings />}
+
+      {/* Gate de confirmação — um modal por vez */}
+      {currentConfirm && (
+        <ConfirmDialog
+          requestId={currentConfirm.requestId}
+          action={currentConfirm.action}
+          filePath={currentConfirm.filePath}
+          preview={currentConfirm.preview}
+          onConfirm={() => handleConfirm(currentConfirm.requestId)}
+          onDeny={() => handleDeny(currentConfirm.requestId)}
+          timeout={currentConfirm.timeout}
+        />
+      )}
     </div>
   )
 }
