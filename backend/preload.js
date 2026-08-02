@@ -46,17 +46,44 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMemorySettings: () => ipcRenderer.invoke('memory:getSettings'),
   saveMemorySettings: (settings) => ipcRenderer.invoke('memory:saveSettings', settings),
 
+  // Project API
+  listProjects: () => ipcRenderer.invoke('project:list'),
+  getActiveProject: () => ipcRenderer.invoke('project:getActive'),
+  selectProject: (projectId) => ipcRenderer.invoke('project:select', projectId),
+  addProject: (dirPath) => ipcRenderer.invoke('project:add', dirPath),
+  removeProject: (projectId) => ipcRenderer.invoke('project:remove', projectId),
+
   // Knowledge Graph API
   knowledgePipeline: (data) => ipcRenderer.invoke('knowledge:pipeline', data),
   knowledgeSearch: (data) => ipcRenderer.invoke('knowledge:search', data),
   knowledgeCreateNode: (data) => ipcRenderer.invoke('knowledge:createNode', data),
   knowledgeStats: () => ipcRenderer.invoke('knowledge:stats'),
 
+  // Repo Map API
+  indexRepo: (projectId, projectPath) => ipcRenderer.invoke('repo:index', { projectId, projectPath }),
+  getRepoMap: (projectId) => ipcRenderer.invoke('repo:getMap', projectId),
+  reindexFile: (projectId, projectPath, filePath) => ipcRenderer.invoke('repo:reindexFile', { projectId, projectPath, filePath }),
+  removeFileFromIndex: (projectId, filePath) => ipcRenderer.invoke('repo:removeFile', { projectId, filePath }),
+  onRepoIndexProgress: (callback) => ipcRenderer.on('repo:indexProgress', (_, data) => callback(data)),
+  removeRepoIndexListener: () => ipcRenderer.removeAllListeners('repo:indexProgress'),
+
   // Gate de Confirmação
-  confirmResponse: (requestId, approved) => ipcRenderer.invoke('confirm:response', { requestId, approved }),
+  confirmResponse: (requestId, approved, alwaysAllow, scope) => ipcRenderer.invoke('confirm:response', { requestId, approved, alwaysAllow, scope }),
   getOperationsLog: (opts) => ipcRenderer.invoke('system:getOperationsLog', opts),
 
   // Eventos de confirmação (main → frontend)
   onConfirmRequest: (callback) => ipcRenderer.on('confirm:request', (_, data) => callback(data)),
   removeConfirmListener: () => ipcRenderer.removeAllListeners('confirm:request'),
+
+  // Activity Trace (tool calls em tempo real)
+  onToolStart: (callback) => ipcRenderer.on('agent:tool:start', (_, data) => callback(data)),
+  removeToolStartListener: () => ipcRenderer.removeAllListeners('agent:tool:start'),
+  onPhaseChange: (callback) => ipcRenderer.on('agent:phase_change', (_, data) => callback(data)),
+  removePhaseChangeListener: () => ipcRenderer.removeAllListeners('agent:phase_change'),
+
+  // Regras de Permissão ("Permitir sempre")
+  listPermissionRules: (projectId) => ipcRenderer.invoke('permissions:list', projectId),
+  addPermissionRule: (projectId, action, scope) => ipcRenderer.invoke('permissions:add', { projectId, action, scope }),
+  removePermissionRule: (ruleId) => ipcRenderer.invoke('permissions:remove', ruleId),
+  clearPermissionRules: (projectId) => ipcRenderer.invoke('permissions:clear', projectId),
 });

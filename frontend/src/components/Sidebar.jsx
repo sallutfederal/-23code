@@ -6,10 +6,9 @@ import ConfirmDialog from './ConfirmDialog'
 import CustomizeModal from './CustomizeModal'
 import ChatContextMenu from './ChatContextMenu'
 
-function Sidebar({ isOpen, onClose, onNewChat, onSelectChat }) {
+function Sidebar({ isOpen, onClose, onNewChat, onSelectChat, activeTab, onTabChange }) {
   const { user } = useUser()
   const { chats, activeChatId, deleteChat, starChat, markAsUnread, renameChat } = useChat()
-  const [activeTab, setActiveTab] = useState('inicio')
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [chatToDelete, setChatToDelete] = useState(null)
   const [hoveredChat, setHoveredChat] = useState(null)
@@ -70,7 +69,7 @@ function Sidebar({ isOpen, onClose, onNewChat, onSelectChat }) {
 
         <div className="flex items-center gap-1 px-3 pt-3 pb-2">
           <button
-            onClick={() => setActiveTab('inicio')}
+            onClick={() => onTabChange('inicio')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'inicio'
                 ? 'bg-gray-100 dark:bg-bg-200 text-gray-900 dark:text-text-000'
@@ -84,7 +83,7 @@ function Sidebar({ isOpen, onClose, onNewChat, onSelectChat }) {
             Início
           </button>
           <button
-            onClick={() => setActiveTab('code')}
+            onClick={() => onTabChange('code')}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'code'
                 ? 'bg-gray-100 dark:bg-bg-200 text-gray-900 dark:text-text-000'

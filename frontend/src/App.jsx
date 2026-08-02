@@ -1,23 +1,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { UserProvider, useUser } from './context/UserContext'
 import { ChatProvider, useChat } from './context/ChatContext'
+import { ProjectProvider, useProject } from './context/ProjectContext'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import WelcomeScreen from './components/WelcomeScreen'
 import ChatView from './components/ChatView'
+import CodeView from './components/code/CodeView'
 import Settings from './components/Settings'
 import ConfirmDialog from './components/ConfirmDialog'
+import { useActivityTrace } from './hooks/useActivityTrace'
 import { parseCommand, executeCommand } from './utils/commandParser'
 import { DEFAULT_MODEL } from './config/model'
 
 function AppContent() {
   const { user, showSettings, theme } = useUser()
   const { activeChat, activeChatId, createChat, sendMessage, selectChat, newChat } = useChat()
+  const { activeProject, repoMap } = useProject()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState('inicio')
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL)
   const [loadingStatus, setLoadingStatus] = useState('idle')
   const [displayedText, setDisplayedText] = useState('')
   const typewriterRef = useRef(null)
+
+  // --- Activity Trace ---
+  const { actions, phase, totalActions, isExpanded, toggleExpand, reset: resetTrace } = useActivityTrace()
 
   // --- Fila de confirmações ---
   const [confirmQueue, setConfirmQueue] = useState([])
@@ -48,12 +56,17 @@ function AppContent() {
 
   const handleConfirm = useCallback(async (requestId) => {
     setCurrentConfirm(null)
-    await window.electronAPI.confirmResponse(requestId, true)
+    await window.electronAPI.confirmResponse(requestId, true, false)
   }, [])
 
   const handleDeny = useCallback(async (requestId) => {
     setCurrentConfirm(null)
-    await window.electronAPI.confirmResponse(requestId, false)
+    await window.electronAPI.confirmResponse(requestId, false, false)
+  }, [])
+
+  const handleAlwaysAllow = useCallback(async (requestId, scope) => {
+    setCurrentConfirm(null)
+    await window.electronAPI.confirmResponse(requestId, true, true, scope)
   }, [])
 
   // --- Tema ---
@@ -136,6 +149,8 @@ function AppContent() {
       sendMessage(chatId, 'user', fullMessage)
     }
 
+    // Limpar trace e iniciar nova fase
+    resetTrace()
     setLoadingStatus('thinking')
 
     try {
@@ -171,7 +186,7 @@ function AppContent() {
           try {
             const kgResult = await window.electronAPI.knowledgePipeline({
               text: fullMessage,
-              projectId: 'default',
+              projectId: activeProject?.id || 'default',
               nodeType: 'contexto_projeto',
             })
             if (kgResult.success && kgResult.data?.retrieved_context) {
@@ -180,6 +195,28 @@ function AppContent() {
           } catch (kgError) {
             console.log('Knowledge graph indisponível:', kgError.message)
           }
+        }
+
+        // Adicionar repo map ao contexto do agente
+        if (repoMap && repoMap.files) {
+          const repoMapContext = repoMap.files
+            .filter(f => f.category !== 'binary' && f.category !== 'lockfile')
+            .map(f => {
+              if (f.signatures && f.signatures.length > 0) {
+                const sigs = f.signatures
+                  .map(s => `  ${s.exported ? 'export ' : ''}${s.type} ${s.name}(${s.params.join(', ')})`)
+                  .join('\n')
+                return `${f.relativePath}:\n${sigs}`
+              } else if (f.content) {
+                const truncated = f.content.slice(0, 500)
+                return `${f.relativePath}:\n${truncated}${f.content.length > 500 ? '...' : ''}`
+              }
+              return f.relativePath
+            })
+            .join('\n\n')
+          
+          userContext.repoMap = repoMapContext
+          userContext.projectPath = activeProject?.path
         }
 
         if (window.electronAPI) {
@@ -224,9 +261,13 @@ function AppContent() {
           onClose={() => setSidebarOpen(false)}
           onNewChat={handleNewChat}
           onSelectChat={handleSelectChat}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
         />
         <main className="flex-1 overflow-hidden">
-          {!activeChat ? (
+          {activeTab === 'code' ? (
+            <CodeView />
+          ) : !activeChat ? (
             <WelcomeScreen onSendMessage={handleSendMessage} selectedModel={selectedModel} onModelChange={setSelectedModel} />
           ) : (
             <ChatView
@@ -236,6 +277,7 @@ function AppContent() {
               onModelChange={setSelectedModel}
               loadingStatus={loadingStatus}
               displayedText={displayedText}
+              activityTrace={{ actions, phase, totalActions, isExpanded, onToggleExpand: toggleExpand }}
             />
           )}
         </main>
@@ -250,8 +292,10 @@ function AppContent() {
           action={currentConfirm.action}
           filePath={currentConfirm.filePath}
           preview={currentConfirm.preview}
+          scope={currentConfirm.scope}
           onConfirm={() => handleConfirm(currentConfirm.requestId)}
           onDeny={() => handleDeny(currentConfirm.requestId)}
+          onAlwaysAllow={(scope) => handleAlwaysAllow(currentConfirm.requestId, scope)}
           timeout={currentConfirm.timeout}
         />
       )}
@@ -263,7 +307,9 @@ function App() {
   return (
     <UserProvider>
       <ChatProvider>
-        <AppContent />
+        <ProjectProvider>
+          <AppContent />
+        </ProjectProvider>
       </ChatProvider>
     </UserProvider>
   )

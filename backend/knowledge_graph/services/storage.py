@@ -267,6 +267,48 @@ def search_similar(
     return results
 
 
+class _StorageAPI:
+    """Wrapper que expõe as funções do storage como métodos de instância."""
+
+    def create_node(self, content, embedding, node_type, project_id, metadata=None):
+        return create_node(content, embedding, node_type, project_id, metadata)
+
+    def get_node(self, node_id):
+        return get_node(node_id)
+
+    def update_node(self, node_id, content, embedding):
+        return update_node(node_id, content, embedding)
+
+    def delete_node(self, node_id):
+        return delete_node(node_id)
+
+    def list_nodes(self, project_id=None):
+        return list_nodes(project_id)
+
+    def create_relation(self, source_id, target_id, relation_type):
+        return create_relation(source_id, target_id, relation_type)
+
+    def get_node_relations(self, node_id):
+        return get_node_relations(node_id)
+
+    def search_similar(self, query_embedding, project_id, top_k=5, threshold=0.75):
+        return search_similar(query_embedding, project_id, top_k, threshold)
+
+    def get_stats(self):
+        return get_stats()
+
+
+_storage_instance: _StorageAPI | None = None
+
+
+def get_storage() -> _StorageAPI:
+    """Retorna instância singleton do storage."""
+    global _storage_instance
+    if _storage_instance is None:
+        _storage_instance = _StorageAPI()
+    return _storage_instance
+
+
 def get_stats() -> dict:
     """Retorna estatísticas do storage."""
     projects = set(n["project_id"] for n in _nodes.values())

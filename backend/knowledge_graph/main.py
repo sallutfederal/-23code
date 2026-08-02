@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from knowledge_graph.api.nodes import router as nodes_router
+from knowledge_graph.services.repo_indexer import router as repo_router
 from knowledge_graph.config import settings
 from knowledge_graph.services import storage
 
@@ -28,6 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(nodes_router)
+app.include_router(repo_router)
 
 
 @app.on_event("startup")

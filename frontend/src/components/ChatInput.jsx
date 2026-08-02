@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { AI_MODELS, DEFAULT_MODEL } from '../config/model'
+import { useProject } from '../context/ProjectContext'
+import ProjectChip from './ProjectChip'
+import ProjectModal from './ProjectModal'
 
 function ChatInput({ onSend, placeholder, selectedModel, onModelChange, disabled }) {
+  const { activeProject, projects, loading, selectProject, addProject } = useProject()
   const [text, setText] = useState('')
   const [showModelMenu, setShowModelMenu] = useState(false)
   const [showSlashMenu, setShowSlashMenu] = useState(false)
+  const [showProjectModal, setShowProjectModal] = useState(false)
   const [skills, setSkills] = useState([])
   const [slashFilter, setSlashFilter] = useState('')
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0)
@@ -262,6 +267,12 @@ function ChatInput({ onSend, placeholder, selectedModel, onModelChange, disabled
             />
           </div>
 
+          {/* Project Chip */}
+          <ProjectChip 
+            project={activeProject} 
+            onClick={() => setShowProjectModal(true)} 
+          />
+
           <div className="relative flex items-center w-full gap-2">
             <div className="relative shrink-0 flex items-center gap-1" ref={attachMenuRef}>
               <button
@@ -400,6 +411,17 @@ function ChatInput({ onSend, placeholder, selectedModel, onModelChange, disabled
         </div>
 
       </div>
+
+      {/* Project Selection Modal */}
+      <ProjectModal
+        isOpen={showProjectModal}
+        onClose={() => setShowProjectModal(false)}
+        projects={projects}
+        activeProject={activeProject}
+        onSelect={selectProject}
+        onAdd={addProject}
+        loading={loading}
+      />
     </div>
   )
 }

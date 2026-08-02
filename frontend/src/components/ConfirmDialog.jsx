@@ -1,22 +1,28 @@
 import { useEffect, useState, useRef } from 'react'
 
 const ACTION_CONFIG = {
-  CREATE_DIR: { verb: 'Criar pasta', color: 'blue', iconPath: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z' },
-  CREATE_FILE: { verb: 'Criar arquivo', color: 'emerald', iconPath: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8' },
-  EDIT_FILE: { verb: 'Editar arquivo', color: 'violet', iconPath: 'M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z' },
+  CREATE_DIR: { verb: 'Permissão necessária', subtitle: 'Criar pasta', color: 'blue', iconPath: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z' },
+  CREATE_FILE: { verb: 'Permissão necessária', subtitle: 'Criar arquivo', color: 'emerald', iconPath: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8' },
+  EDIT_FILE: { verb: 'Permissão necessária', subtitle: 'Editar arquivo', color: 'violet', iconPath: 'M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z' },
+  DELETE_FILE: { verb: 'Permissão necessária', subtitle: 'Deletar arquivo', color: 'red', iconPath: 'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' },
+  DELETE_DIR: { verb: 'Permissão necessária', subtitle: 'Deletar pasta', color: 'red', iconPath: 'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' },
+  READ_FILE: { verb: 'Permissão necessária', subtitle: 'Acessar arquivo', color: 'amber', iconPath: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253' },
+  RUN_COMMAND: { verb: 'Permissão necessária', subtitle: 'Executar comando', color: 'amber', iconPath: 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
 }
 
 const COLOR_MAP = {
   blue: { bg: 'bg-blue-500/10', text: 'text-blue-500', ring: 'ring-blue-500/20', btn: 'bg-blue-500 hover:bg-blue-600' },
   emerald: { bg: 'bg-emerald-500/10', text: 'text-emerald-500', ring: 'ring-emerald-500/20', btn: 'bg-emerald-500 hover:bg-emerald-600' },
   violet: { bg: 'bg-violet-500/10', text: 'text-violet-500', ring: 'ring-violet-500/20', btn: 'bg-violet-500 hover:bg-violet-600' },
+  red: { bg: 'bg-red-500/10', text: 'text-red-500', ring: 'ring-red-500/20', btn: 'bg-red-500 hover:bg-red-600' },
+  amber: { bg: 'bg-amber-500/10', text: 'text-amber-500', ring: 'ring-amber-500/20', btn: 'bg-amber-500 hover:bg-amber-600' },
 }
 
-function ConfirmDialog({ requestId, action, filePath, preview, onConfirm, onDeny, timeout = 300000 }) {
+function ConfirmDialog({ requestId, action, filePath, preview, scope, onConfirm, onDeny, onAlwaysAllow, timeout = 300000 }) {
   const [timeLeft, setTimeLeft] = useState(timeout)
   const [isExiting, setIsExiting] = useState(false)
   const timerRef = useRef(null)
-  const config = ACTION_CONFIG[action] || { verb: 'Operação', color: 'blue', iconPath: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }
+  const config = ACTION_CONFIG[action] || { verb: 'Permissão necessária', subtitle: 'Operação', color: 'amber', iconPath: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }
   const colors = COLOR_MAP[config.color]
 
   useEffect(() => {
@@ -47,7 +53,12 @@ function ConfirmDialog({ requestId, action, filePath, preview, onConfirm, onDeny
 
   const handleConfirm = () => {
     setIsExiting(true)
-    setTimeout(onConfirm, 200)
+    setTimeout(() => onConfirm(), 200)
+  }
+
+  const handleAlwaysAllow = () => {
+    setIsExiting(true)
+    setTimeout(() => onAlwaysAllow?.(scope || filePath), 200)
   }
 
   const handleDeny = () => {
@@ -175,6 +186,7 @@ function ConfirmDialog({ requestId, action, filePath, preview, onConfirm, onDeny
 
   const fileName = filePath?.split(/[/\\]/).pop() || filePath
   const fileDir = filePath?.replace(fileName, '') || ''
+  const displayScope = scope || filePath
 
   return (
     <div className={`fixed inset-0 z-[300] flex items-center justify-center p-4 transition-all duration-200 ${isExiting ? 'bg-black/0' : 'bg-black/60 backdrop-blur-sm'}`}>
@@ -197,18 +209,16 @@ function ConfirmDialog({ requestId, action, filePath, preview, onConfirm, onDeny
               <h2 className="text-lg font-semibold text-gray-900 dark:text-text-000">
                 {config.verb}
               </h2>
-              <div className="mt-1 flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5 text-text-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                </svg>
-                <span className="text-xs text-text-300 font-mono truncate" title={filePath}>
-                  {fileName}
-                </span>
-              </div>
-              {fileDir && (
-                <p className="mt-0.5 text-[10px] text-text-300 truncate font-mono" title={fileDir}>
-                  {fileDir}
-                </p>
+              <p className="text-sm text-gray-500 dark:text-text-300">
+                {config.subtitle}
+              </p>
+              {/* Path/escopo em bloco monoespaçado */}
+              {displayScope && (
+                <div className="mt-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-bg-200 border border-gray-200 dark:border-border-300">
+                  <code className="text-xs font-mono text-gray-700 dark:text-text-200 break-all">
+                    {displayScope}
+                  </code>
+                </div>
               )}
             </div>
             <div className="flex-shrink-0">
@@ -233,26 +243,45 @@ function ConfirmDialog({ requestId, action, filePath, preview, onConfirm, onDeny
           </div>
         )}
 
-        {/* Actions */}
-        <div className="px-6 py-4 bg-gray-50/80 dark:bg-bg-000/80 backdrop-blur-sm border-t border-gray-100 dark:border-border-300 flex items-center justify-between">
-          <button
-            onClick={handleDeny}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-text-200 hover:text-text-000 rounded-xl hover:bg-gray-200 dark:hover:bg-bg-200 transition-all duration-150"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            Negar
-          </button>
-          <button
-            onClick={handleConfirm}
-            className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white ${colors.btn} rounded-xl shadow-lg shadow-${config.color}-500/25 transition-all duration-150 active:scale-95`}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            Aprovar
-          </button>
+        {/* Actions — 3 botões */}
+        <div className="px-6 py-4 bg-gray-50/80 dark:bg-bg-000/80 backdrop-blur-sm border-t border-gray-100 dark:border-border-300">
+          <div className="flex items-center gap-2">
+            {/* Negar — sempre visível */}
+            <button
+              onClick={handleDeny}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-text-200 hover:text-red-600 dark:hover:text-red-400 rounded-xl hover:bg-red-50 dark:hover:bg-red-500/10 border border-gray-200 dark:border-border-300 transition-all duration-150"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Negar
+            </button>
+
+            {/* Spacer */}
+            <div className="flex-1" />
+
+            {/* Permitir sempre */}
+            <button
+              onClick={handleAlwaysAllow}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-text-100 rounded-xl border border-gray-300 dark:border-border-200 hover:bg-gray-100 dark:hover:bg-bg-200 transition-all duration-150"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Permitir sempre
+            </button>
+
+            {/* Permitir uma vez — ação principal */}
+            <button
+              onClick={handleConfirm}
+              className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white ${colors.btn} rounded-xl shadow-lg shadow-${config.color}-500/25 transition-all duration-150 active:scale-95`}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Permitir
+            </button>
+          </div>
         </div>
       </div>
     </div>

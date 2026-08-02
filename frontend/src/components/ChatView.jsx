@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'react'
 import ChatInput from './ChatInput'
 import Message from './Message'
 import ThinkingIndicator from './ThinkingIndicator'
+import ActivityTrace from './ActivityTrace'
 import { useUser } from '../context/UserContext'
 import aiAvatar from '../assets/23codex.jpg'
 
@@ -23,12 +24,12 @@ function TypingMessage({ text }) {
   )
 }
 
-function ChatView({ messages, onSendMessage, selectedModel, onModelChange, loadingStatus, displayedText }) {
+function ChatView({ messages, onSendMessage, selectedModel, onModelChange, loadingStatus, displayedText, activityTrace }) {
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loadingStatus, displayedText])
+  }, [messages, loadingStatus, displayedText, activityTrace?.actions])
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -38,9 +39,32 @@ function ChatView({ messages, onSendMessage, selectedModel, onModelChange, loadi
             <Message key={i} message={msg} />
           ))}
 
-          {/* Indicador de thinking/digitando */}
-          {loadingStatus === 'thinking' && (
+          {/* Activity Trace — exibe ações de tools em tempo real */}
+          {activityTrace && activityTrace.actions.length > 0 && (
+            <div className="flex gap-3 justify-start">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden">
+                <img src={aiAvatar} alt="AI" className="w-full h-full object-cover" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <ActivityTrace
+                  actions={activityTrace.actions}
+                  phase={activityTrace.phase}
+                  totalActions={activityTrace.totalActions}
+                  isExpanded={activityTrace.isExpanded}
+                  onToggleExpand={activityTrace.onToggleExpand}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Indicador de thinking/digitando (só aparece quando NÃO tem trace ou trace terminou) */}
+          {loadingStatus === 'thinking' && (!activityTrace || activityTrace.actions.length === 0) && (
             <ThinkingIndicator status="thinking" />
+          )}
+
+          {/* Indicador "Pensando" quando trace mostra fase thinking e está colapsado */}
+          {activityTrace && activityTrace.phase === 'thinking' && !activityTrace.isExpanded && activityTrace.actions.length > 0 && (
+            <ThinkingIndicator status="thinking" label={`${activityTrace.totalActions} ações executadas — Pensando`} />
           )}
 
           {/* Mensagem sendo digitada com cursor */}
