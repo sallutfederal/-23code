@@ -82,6 +82,27 @@ async function savePermissionRule(projectId, action, scope) {
 // --- Logging ---
 const LOG_PATH = path.join(app.getPath('userData'), 'operations.log');
 
+// --- Write lock per file path ---
+// Serializes writes to the same file, preventing race conditions between
+// writeFileContent (user Ctrl+S) and edit_file (agent).
+const writeLocks = new Map();
+
+async function withWriteLock(filePath, fn) {
+  // Wait for any pending write to the same path
+  const prev = writeLocks.get(filePath);
+  if (prev) {
+    await prev.catch(() => {}); // don't let prior errors propagate
+  }
+  // Execute this write, store its promise, clean up when done
+  const promise = fn().finally(() => {
+    if (writeLocks.get(filePath) === promise) {
+      writeLocks.delete(filePath);
+    }
+  });
+  writeLocks.set(filePath, promise);
+  return promise;
+}
+
 async function logOperation(action, filePath, result = '', extra = '') {
   const timestamp = new Date().toISOString();
   const parts = [timestamp, action, result || 'AUTO', filePath];
@@ -601,10 +622,13 @@ async function executeToolCall(toolName, args, activeProject) {
           scope: path.dirname(resolved) + path.sep
         });
       }
-      const dir = path.dirname(resolved);
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(resolved, args.content, 'utf-8');
+      await withWriteLock(resolved, async () => {
+        const dir = path.dirname(resolved);
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(resolved, args.content, 'utf-8');
+      });
       triggerFileReindex(resolved);
+      emit('file:changed', { path: resolved, type: 'created' });
       return { success: true, path: resolved };
     }
     
@@ -626,13 +650,19 @@ async function executeToolCall(toolName, args, activeProject) {
           scope: resolved
         });
       }
-      const content = await fs.readFile(resolved, 'utf-8');
-      if (!content.includes(args.old_text)) {
-        return { error: 'Texto antigo não encontrado no arquivo' };
-      }
-      const newContent = content.split(args.old_text).join(args.new_text);
-      await fs.writeFile(resolved, newContent, 'utf-8');
+      // Serializar leitura + diff + escrita no mesmo arquivo
+      const result = await withWriteLock(resolved, async () => {
+        const content = await fs.readFile(resolved, 'utf-8');
+        if (!content.includes(args.old_text)) {
+          return { error: 'Texto antigo não encontrado no arquivo' };
+        }
+        const newContent = content.split(args.old_text).join(args.new_text);
+        await fs.writeFile(resolved, newContent, 'utf-8');
+        return { success: true };
+      });
+      if (result.error) return result;
       triggerFileReindex(resolved);
+      emit('file:changed', { path: resolved, type: 'edited' });
       return { success: true, path: resolved };
     }
     
@@ -1302,6 +1332,51 @@ ipcMain.handle('system:editFile', async (event, filePath, oldStr, newStr) => {
     if (!errorMsg.includes('expirada') && !errorMsg.includes('cancelada')) {
       await logOperation('EDIT_FILE', filePath, 'FAILED', errorMsg);
     }
+    return { success: false, error: errorMsg };
+  }
+});
+
+// --- Salvar conteúdo completo de arquivo (usado pelo Monaco Editor / Ctrl+S do usuário) ---
+// SEM gate de confirmação — é ação direta do usuário no editor.
+// Validação de path e blocklist de sensíveis continuam ativas.
+// Usa withWriteLock para serializar escritas no mesmo arquivo.
+ipcMain.handle('system:writeFileContent', async (event, filePath, content) => {
+  try {
+    const resolved = path.resolve(filePath);
+
+    // Blocklist: recusar escrita em arquivos sensíveis
+    if (isSensitiveFile(resolved)) {
+      await logOperation('WRITE_FILE', resolved, 'BLOCKED', 'Arquivo sensível');
+      return { success: false, error: `Arquivo sensível bloqueado: ${path.basename(resolved)}` };
+    }
+
+    // Validação de path (deve estar dentro do projeto)
+    const active = await readActiveProject();
+    if (active && !isPathInsideProject(resolved, active.path)) {
+      await logOperation('WRITE_FILE', resolved, 'BLOCKED', 'Fora do projeto');
+      return { success: false, error: 'Arquivo fora do diretório do projeto' };
+    }
+
+    // Serializar escrita: aguardar escrita anterior no mesmo path
+    await withWriteLock(resolved, async () => {
+      // Garantir que o diretório pai existe
+      const dir = path.dirname(resolved);
+      await fs.mkdir(dir, { recursive: true });
+
+      // Salvar em disco
+      await fs.writeFile(resolved, content, 'utf-8');
+    });
+
+    // Log de auditoria (fonte confiável de tudo que mudou no projeto)
+    await logOperation('SAVED_BY_USER', resolved, 'OK', `${content.length} bytes`);
+
+    // Reindexar arquivo (em background)
+    triggerFileReindex(resolved);
+
+    return { success: true, data: resolved };
+  } catch (error) {
+    const errorMsg = error.message || String(error);
+    await logOperation('SAVED_BY_USER', filePath, 'FAILED', errorMsg);
     return { success: false, error: errorMsg };
   }
 });

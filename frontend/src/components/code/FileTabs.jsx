@@ -1,3 +1,4 @@
+import { useState, useCallback } from 'react'
 import { useCode } from '../../context/CodeContext'
 
 /**
@@ -15,11 +16,33 @@ const TAB_ICON_COLORS = {
 /**
  * FileTabs — barra horizontal de tabs de arquivos abertos.
  *
- * Cada tab mostra: ícone + nome do arquivo + indicador de modificação + botão fechar.
- * Scroll horizontal automático quando há mais tabs do que cabe na largura.
+ * Cada tab mostra:
+ * - Ícone por extensão
+ * - Nome do arquivo
+ * - Indicador de dirty (asterisco) quando há alterações não salvas
+ * - Indicador de modificação externa (bolinha amarela)
+ * - Botão fechar
+ *
+ * Se tentar fechar tab com dirty, abre confirmação inline.
  */
 export default function FileTabs() {
-  const { openTabs, activeTabPath, setActiveTab, closeTab, reloadFile } = useCode()
+  const { openTabs, activeTabPath, setActiveTab, requestCloseTab, performCloseTab } = useCode()
+  const [confirmClosePath, setConfirmClosePath] = useState(null)
+
+  const handleClose = useCallback((e, tabPath) => {
+    e.stopPropagation()
+    const needsConfirm = requestCloseTab(tabPath)
+    if (needsConfirm) {
+      setConfirmClosePath(tabPath)
+    }
+  }, [requestCloseTab])
+
+  const handleConfirmClose = useCallback((confirm) => {
+    if (confirm && confirmClosePath) {
+      performCloseTab(confirmClosePath)
+    }
+    setConfirmClosePath(null)
+  }, [confirmClosePath, performCloseTab])
 
   if (openTabs.length === 0) return null
 
@@ -29,6 +52,7 @@ export default function FileTabs() {
         const isActive = tab.path === activeTabPath
         const ext = tab.name.includes('.') ? '.' + tab.name.split('.').pop() : ''
         const iconColor = TAB_ICON_COLORS[ext] || '#888888'
+        const isConfirming = confirmClosePath === tab.path
 
         return (
           <div
@@ -46,29 +70,63 @@ export default function FileTabs() {
               <polyline points="14 2 14 8 20 8"/>
             </svg>
 
-            {/* Nome (sem path) */}
+            {/* Nome */}
             <span className="truncate max-w-[120px]">{tab.name}</span>
 
-            {/* Indicador de modificação externa */}
-            {tab.modified && (
+            {/* Indicador de dirty (asterisco) */}
+            {tab.dirty && (
+              <span className="text-amber-500 dark:text-amber-400 font-bold text-xs leading-none">*</span>
+            )}
+
+            {/* Indicador de modificação externa (bolinha) */}
+            {tab.modified && !tab.dirty && (
               <button
-                onClick={(e) => { e.stopPropagation(); reloadFile(tab.path) }}
-                className="w-2 h-2 rounded-full bg-amber-400 dark:bg-amber-500 shrink-0 hover:scale-150 transition-transform"
-                title="Arquivo modificado externamente — clique para recarregar"
+                onClick={(e) => { e.stopPropagation() }}
+                className="w-2 h-2 rounded-full bg-blue-400 dark:bg-blue-500 shrink-0"
+                title="Modificado pelo agente"
               />
             )}
 
-            {/* Botão fechar */}
-            <button
-              onClick={(e) => { e.stopPropagation(); closeTab(tab.path) }}
-              className="ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-bg-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-              title="Fechar tab"
-            >
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18"/>
-                <line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
+            {/* Indicador de conflito */}
+            {tab.conflict && (
+              <span className="w-2 h-2 rounded-full bg-red-400 dark:bg-red-500 shrink-0" title="Conflito de edição"/>
+            )}
+
+            {/* Botão fechar ou confirmação */}
+            {isConfirming ? (
+              <div className="flex items-center gap-0.5 ml-0.5">
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleConfirmClose(true) }}
+                  className="p-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
+                  title="Fechar e descartar alterações"
+                >
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleConfirmClose(false) }}
+                  className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-bg-300 transition-colors"
+                  title="Cancelar"
+                >
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={(e) => handleClose(e, tab.path)}
+                className="ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-bg-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                title="Fechar tab"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            )}
           </div>
         )
       })}

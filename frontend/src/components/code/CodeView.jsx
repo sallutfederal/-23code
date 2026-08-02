@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { CodeProvider, useCode } from '../../context/CodeContext'
 import { useProject } from '../../context/ProjectContext'
+import { useFileWatcher } from '../../hooks/useFileWatcher'
 import FileTree from './FileTree'
 import FileTabs from './FileTabs'
 import FileViewer from './FileViewer'
@@ -27,6 +28,9 @@ function CodeViewInner() {
   const [treeWidth, setTreeWidth] = useState(TREE_DEFAULT_WIDTH)
   const [isDragging, setIsDragging] = useState(false)
   const containerRef = useRef(null)
+
+  // Connect backend file change events to debounced tab updates
+  useFileWatcher()
 
   // --- Drag para redimensionar a árvore ---
   const handleMouseDown = useCallback((e) => {

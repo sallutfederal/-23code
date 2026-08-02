@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   editFile: (filePath, oldStr, newStr) => ipcRenderer.invoke('system:editFile', filePath, oldStr, newStr),
 
   readFile: (filePath) => ipcRenderer.invoke('system:readFile', filePath),
+  writeFileContent: (filePath, content) => ipcRenderer.invoke('system:writeFileContent', filePath, content),
   deleteFile: (filePath) => ipcRenderer.invoke('system:deleteFile', filePath),
   deleteDir: (dirPath) => ipcRenderer.invoke('system:deleteDir', dirPath),
   listDir: (dirPath) => ipcRenderer.invoke('system:listDir', dirPath),
@@ -80,6 +81,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeToolStartListener: () => ipcRenderer.removeAllListeners('agent:tool:start'),
   onPhaseChange: (callback) => ipcRenderer.on('agent:phase_change', (_, data) => callback(data)),
   removePhaseChangeListener: () => ipcRenderer.removeAllListeners('agent:phase_change'),
+
+  // File change notifications (agent edits → frontend)
+  onFileChanged: (callback) => ipcRenderer.on('file:changed', (_, data) => callback(data)),
+  removeFileChangedListener: () => ipcRenderer.removeAllListeners('file:changed'),
+  onFileDeleted: (callback) => ipcRenderer.on('file:deleted', (_, data) => callback(data)),
+  removeFileDeletedListener: () => ipcRenderer.removeAllListeners('file:deleted'),
 
   // Regras de Permissão ("Permitir sempre")
   listPermissionRules: (projectId) => ipcRenderer.invoke('permissions:list', projectId),

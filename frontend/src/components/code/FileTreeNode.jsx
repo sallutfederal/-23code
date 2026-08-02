@@ -115,7 +115,7 @@ function FileTreeNode({ node, depth = 0 }) {
   // Arquivo
   return (
     <button
-      onClick={() => openFile(node.path, node.name, node.sensitive, node.language)}
+      onClick={() => openFile(node.path, node.name, node.sensitive, node.language, node.tooLarge)}
       className={`flex items-center gap-1.5 w-full px-2 py-0.5 text-left text-sm rounded transition-colors ${
         isActive
           ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
